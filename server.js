@@ -747,6 +747,24 @@ app.delete('/valves/:id', requireAuth, async (req, res) => {
   }
 });
 
+// Update valve
+app.put('/valves/:id', requireAuth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    const rows = db.prepare('SELECT * FROM valves WHERE id = ?').all(req.params.id);
+    if (rows.length === 0) return res.status(404).json({ success: false, error: 'Valve not found' });
+    const valve = rows[0];
+    const lands = db.prepare('SELECT user_id FROM lands WHERE id = ?').all(valve.land_id);
+    if (lands.length === 0) return res.status(404).json({ success: false, error: 'Land not found' });
+    if (req.user.user_role_id !== 1 && req.user.id !== lands[0].user_id) return res.status(403).json({ success: false, error: 'Forbidden' });
+    db.prepare('UPDATE valves SET name = ? WHERE id = ?').run(name || valve.name, req.params.id);
+    const updated = db.prepare('SELECT * FROM valves WHERE id = ?').all(req.params.id);
+    res.json({ success: true, data: updated[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/pumps/:id', requireAuth, async (req, res) => {
   try {
     const rows = db.prepare('SELECT * FROM pumps WHERE id = ?').all(req.params.id);
@@ -756,6 +774,23 @@ app.get('/pumps/:id', requireAuth, async (req, res) => {
     if (lands.length === 0) return res.status(404).json({ success: false, error: 'Land not found' });
     if (req.user.user_role_id !== 1 && req.user.id !== lands[0].user_id) return res.status(403).json({ success: false, error: 'Forbidden' });
     res.json({ success: true, data: pump });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/pumps/:id', requireAuth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    const rows = db.prepare('SELECT * FROM pumps WHERE id = ?').all(req.params.id);
+    if (rows.length === 0) return res.status(404).json({ success: false, error: 'Pump not found' });
+    const pump = rows[0];
+    const lands = db.prepare('SELECT user_id FROM lands WHERE id = ?').all(pump.land_id);
+    if (lands.length === 0) return res.status(404).json({ success: false, error: 'Land not found' });
+    if (req.user.user_role_id !== 1 && req.user.id !== lands[0].user_id) return res.status(403).json({ success: false, error: 'Forbidden' });
+    db.prepare('UPDATE pumps SET name = ? WHERE id = ?').run(name || pump.name, req.params.id);
+    const updated = db.prepare('SELECT * FROM pumps WHERE id = ?').all(req.params.id);
+    res.json({ success: true, data: updated[0] });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -785,6 +820,23 @@ app.get('/pest-controls/:id', requireAuth, async (req, res) => {
     if (lands.length === 0) return res.status(404).json({ success: false, error: 'Land not found' });
     if (req.user.user_role_id !== 1 && req.user.id !== lands[0].user_id) return res.status(403).json({ success: false, error: 'Forbidden' });
     res.json({ success: true, data: pest });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/pest-controls/:id', requireAuth, async (req, res) => {
+  try {
+    const { name, status } = req.body;
+    const rows = db.prepare('SELECT * FROM pest_controls WHERE id = ?').all(req.params.id);
+    if (rows.length === 0) return res.status(404).json({ success: false, error: 'Pest control not found' });
+    const pest = rows[0];
+    const lands = db.prepare('SELECT user_id FROM lands WHERE id = ?').all(pest.land_id);
+    if (lands.length === 0) return res.status(404).json({ success: false, error: 'Land not found' });
+    if (req.user.user_role_id !== 1 && req.user.id !== lands[0].user_id) return res.status(403).json({ success: false, error: 'Forbidden' });
+    db.prepare('UPDATE pest_controls SET name = ?, status = ? WHERE id = ?').run(name || pest.name, status || pest.status, req.params.id);
+    const updated = db.prepare('SELECT * FROM pest_controls WHERE id = ?').all(req.params.id);
+    res.json({ success: true, data: updated[0] });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
