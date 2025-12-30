@@ -353,6 +353,45 @@ app.post('/lands', requireAuth, async (req, res) => {
   }
 });
 
+// Get single land
+app.get('/lands/:id', requireAuth, async (req, res) => {
+  try {
+    const landId = req.params.id;
+    const lands = db.prepare('SELECT * FROM lands WHERE id = ?').all(landId);
+    if (lands.length === 0) return res.status(404).json({ success: false, error: 'Land not found' });
+
+    if (req.user.user_role_id !== 1 && req.user.id !== lands[0].user_id) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+
+    res.json({ success: true, data: lands[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update land
+app.put('/lands/:id', requireAuth, async (req, res) => {
+  try {
+    const landId = req.params.id;
+    const { location_name, size } = req.body;
+
+    const lands = db.prepare('SELECT * FROM lands WHERE id = ?').all(landId);
+    if (lands.length === 0) return res.status(404).json({ success: false, error: 'Land not found' });
+
+    if (req.user.user_role_id !== 1 && req.user.id !== lands[0].user_id) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+
+    db.prepare('UPDATE lands SET location_name = ?, size = ? WHERE id = ?').run(location_name, size, landId);
+    const updated = db.prepare('SELECT * FROM lands WHERE id = ?').all(landId);
+
+    res.json({ success: true, data: updated[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.delete('/lands/:id', requireAuth, async (req, res) => {
   try {
     const landId = req.params.id;
