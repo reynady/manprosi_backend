@@ -13,13 +13,31 @@ const app = express();
 const PORT = process.env.PORT || 8000;
 
 // Middleware
+// Trust Vercel frontend
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000'
+];
+
+// Add FRONTEND_URL from env if exists (for production)
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://127.0.0.1:5173',
-    'http://localhost:5173',
-    'http://127.0.0.1:3000'
-  ],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    // Check if origin is allowed or if it's a Vercel preview deployment
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 app.use(express.json());
@@ -100,14 +118,14 @@ app.post('/login', async (req, res) => {
     const users = db.prepare('SELECT * FROM users WHERE username = ?').all(username);
 
     if (users.length === 0) {
-      return res.status(401).json({ success: false, error: 'Invalid credentials' });
+      return res.status(401).json({ success: false, error: 'User not found' });
     }
 
     const user = users[0];
     const isValidPassword = await bcrypt.compare(password, user.password);
 
     if (!isValidPassword) {
-      return res.status(401).json({ success: false, error: 'Invalid credentials' });
+      return res.status(401).json({ success: false, error: 'Invalid password' });
     }
 
     // Get role name
@@ -132,11 +150,13 @@ app.post('/login', async (req, res) => {
       });
     }
 
-    // Set cookie
+    // Set cookie (UPDATED FOR PRODUCTION)
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT_NAME;
     res.cookie('userId', user.id, {
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      sameSite: 'lax'
+      sameSite: isProduction ? 'none' : 'lax', // Required for cross-site cookie
+      secure: isProduction, // Required for sameSite: 'none'
     });
     res.json({
       success: true,
