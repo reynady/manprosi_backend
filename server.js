@@ -1,9 +1,10 @@
 import express from 'express';
 import cors from 'cors';
-import cookieParser from 'cookie-parser';
+import cookieParser from 'cookie-parser'; // Keeping for legacy/compatibility if needed, but not primarily used for auth now
 import dotenv from 'dotenv';
 // import mysql from 'mysql2/promise'; // REMOVED
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken'; // ADDED
 import makeRecommendationsRouter from './modules/recommendations/index.js';
 import db, { initDB } from './db.js';
 
@@ -11,6 +12,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8000;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-prod'; // JWT Secret
 
 // Middleware
 // Trust Vercel frontend
@@ -43,7 +45,8 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
-// Database connection handled in db.js
+// Database initialization
+initDB();
 
 // Helper: check if a table has a column (uses PRAGMA table_info)
 function tableHasColumn(table, column) {
@@ -56,26 +59,39 @@ function tableHasColumn(table, column) {
   }
 }
 
-// Auth middleware
+// Auth middleware (JWT Version)
 async function requireAuth(req, res, next) {
-  const userId = req.cookies.userId;
-  if (!userId) {
-    return res.status(401).json({ success: false, error: 'Not authenticated' });
+  // Check Authorization Header first (Bearer Token)
+  const authHeader = req.headers.authorization;
+  let token = null;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
+  } else if (req.cookies && req.cookies.token) {
+    // Fallback to cookie if exists
+    token = req.cookies.token;
+  }
+
+  if (!token) {
+    return res.status(401).json({ success: false, error: 'Not authenticated (No Token)' });
   }
 
   try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const userId = decoded.id;
+
     const users = db.prepare('SELECT * FROM users WHERE id = ?').all(userId);
     if (users.length === 0) {
       return res.status(401).json({ success: false, error: 'User not found' });
     }
-    // Attach user and load role name to make role checks easier
+
     const user = users[0];
     const roles = db.prepare('SELECT name FROM user_roles WHERE id = ?').all(user.user_role_id);
     user.role = roles[0]?.name?.toLowerCase() || 'client';
     req.user = user;
     next();
   } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(403).json({ success: false, error: 'Invalid or expired token' });
   }
 }
 
@@ -150,16 +166,27 @@ app.post('/login', async (req, res) => {
       });
     }
 
-    // Set cookie (UPDATED FOR PRODUCTION)
+    // Generate JWT Token
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: userRole },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    // Also set cookie for redundancy (optional, can be removed later)
     const isProduction = process.env.NODE_ENV === 'production' || process.env.RAILWAY_ENVIRONMENT_NAME;
-    res.cookie('userId', user.id, {
+    res.cookie('token', token, {
       httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      sameSite: isProduction ? 'none' : 'lax', // Required for cross-site cookie
-      secure: isProduction, // Required for sameSite: 'none'
+      maxAge: 24 * 60 * 60 * 1000,
+      sameSite: isProduction ? 'none' : 'lax',
+      secure: isProduction,
     });
+    // Remove old userId cookie
+    res.clearCookie('userId');
+
     res.json({
       success: true,
+      token: token, // SEND TOKEN TO FRONTEND
       data: {
         id: user.id,
         username: user.username,
@@ -195,6 +222,7 @@ app.get('/me', requireAuth, async (req, res) => {
 
 // Logout
 app.post('/logout', (req, res) => {
+  res.clearCookie('token');
   res.clearCookie('userId');
   res.json({ success: true, message: 'Logged out successfully' });
 });
