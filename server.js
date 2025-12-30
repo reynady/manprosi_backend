@@ -67,9 +67,10 @@ async function requireAuth(req, res, next) {
 
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7);
-  } else if (req.cookies && req.cookies.token) {
-    // Fallback to cookie if exists
-    token = req.cookies.token;
+  } else {
+    // Strict JWT: Do NOT accept cookies anymore.
+    // This prevents "zombie sessions" where the browser keeps a cookie but frontend deleted the token.
+    token = null;
   }
 
   if (!token) {
