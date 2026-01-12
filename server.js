@@ -222,10 +222,111 @@ app.get('/me', requireAuth, async (req, res) => {
 });
 
 // Logout
-app.post('/logout', (req, res) => {
-  res.clearCookie('token');
-  res.clearCookie('userId');
-  res.json({ success: true, message: 'Logged out successfully' });
+app.post('/logout', requireAuth, (req, res) => {
+  try {
+    if (req.user) {
+      db.prepare('INSERT INTO user_logs (user_id, action) VALUES (?, ?)').run(req.user.id, 'logout');
+    }
+    res.clearCookie('token');
+    res.clearCookie('userId');
+    res.json({ success: true, message: 'Logged out successfully' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Helper: create notification
+function createNotification(userId, title, message, type) {
+  try {
+    db.prepare('INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)').run(userId, title, message, type);
+  } catch (err) {
+    console.error('Failed to create notification:', err);
+  }
+}
+
+// Admin-only: list logs
+app.get('/logs', requireAuth, requireRole('admin'), (req, res) => {
+  try {
+    const logs = db.prepare(`
+      SELECT l.*, u.username
+      FROM user_logs l
+      JOIN users u ON l.user_id = u.id
+      ORDER BY l.timestamp DESC
+      LIMIT 100
+    `).all();
+    res.json({ success: true, data: logs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/logs', requireAuth, requireRole('admin'), (req, res) => {
+  try {
+    db.prepare('DELETE FROM user_logs').run();
+    res.json({ success: true, message: 'All logs cleared' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/logs/:id', requireAuth, requireRole('admin'), (req, res) => {
+  try {
+    db.prepare('DELETE FROM user_logs WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Notifications routes
+app.get('/notifications', requireAuth, (req, res) => {
+  try {
+    const notifications = db.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
+    res.json({ success: true, data: notifications });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/notifications/:id/read', requireAuth, (req, res) => {
+  try {
+    db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/notifications/:id', requireAuth, (req, res) => {
+  try {
+    if (req.user.user_role_id === 1) {
+      db.prepare('DELETE FROM notifications WHERE id = ?').run(req.params.id);
+    } else {
+      db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/users/:userId/notifications', requireAuth, (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    if (req.user.user_role_id !== 1 && req.user.id !== userId) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+    // Return with a 'description' field for backward compatibility with index.tsx
+    const notifications = db.prepare(`
+      SELECT *, title || ': ' || message as description 
+      FROM notifications 
+      WHERE user_id = ? 
+      ORDER BY created_at DESC
+    `).all(userId);
+    res.json({ success: true, data: notifications });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Users routes (Admin only)
@@ -325,6 +426,26 @@ app.get('/users/:userId/lands', requireAuth, async (req, res) => {
 
     const lands = db.prepare('SELECT * FROM lands WHERE user_id = ?').all(userId);
     res.json({ success: true, data: lands });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/lands', requireAuth, (req, res) => {
+  try {
+    // Admins and Consultants can see all lands for recommendation purposes
+    if (req.user.user_role_id === 1 || req.user.user_role_id === 2) {
+      const lands = db.prepare(`
+        SELECT l.*, u.username as farmer_name 
+        FROM lands l 
+        JOIN users u ON l.user_id = u.id
+      `).all();
+      res.json({ success: true, data: lands });
+    } else {
+      // Regular users only see their own
+      const lands = db.prepare('SELECT * FROM lands WHERE user_id = ?').all(req.user.id);
+      res.json({ success: true, data: lands });
+    }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -543,6 +664,14 @@ app.post('/seeds', requireAuth, async (req, res) => {
     const { name } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'Missing seed name' });
     const result = db.prepare('INSERT INTO seeds (name) VALUES (?)').run(name);
+
+    // Notify all farmers
+    const farmers = db.prepare('SELECT id FROM users WHERE user_role_id = 3').all();
+    farmers.forEach(f => {
+      // createNotification is global here
+      createNotification(f.id, 'New Seed Available', `A new seed "${name}" has been added.`, 'seed');
+    });
+
     res.json({ success: true, data: { id: result.lastInsertRowid, name } });
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(400).json({ success: false, error: 'Seed already exists' });

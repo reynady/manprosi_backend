@@ -50,6 +50,24 @@ export default function makeRecommendationsRouter(db) {
       payload.created_by = req.user.id;
 
       const created = await service.create(payload);
+
+      // Notify the farmer
+      if (payload.land_id) {
+        try {
+          const land = db.prepare('SELECT user_id FROM lands WHERE id = ?').get(payload.land_id);
+          if (land) {
+            db.prepare('INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)').run(
+              land.user_id,
+              'New Recommendation',
+              `A new recommendation "${payload.name}" has been added for your land.`,
+              'recommendation'
+            );
+          }
+        } catch (err) {
+          console.error('Failed to notify farmer about recommendation:', err);
+        }
+      }
+
       return res.json({ success: true, data: created });
     } catch (e) { return createErrorResponse(res, e); }
   });
